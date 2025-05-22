@@ -699,4 +699,20 @@ if __name__ == "__main__":
     app.add_handler(edit_task_conv)
 
     print("🤖 Plant Care Bot is starting...")
-    app.run_polling()
+    import asyncio
+
+async def main():
+    await app.initialize()
+    await app.start()
+    await app.updater.start_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        url_path=TELEGRAM_TOKEN,
+        webhook_url=f"https://garden-basic-bot-471741639014.europe-west1.run.app/{TELEGRAM_TOKEN}"
+    )
+    print("Webhook started")
+
+    await idle()
+
+if __name__ == "__main__":
+    asyncio.run(main())
