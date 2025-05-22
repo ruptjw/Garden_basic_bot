@@ -1,0 +1,55 @@
+{
+  "5326320009": {
+    "region": "Lisbon",
+    "plants": [
+      {
+        "name": "monstera",
+        "age": "7 months",
+        "added": "2025-05-22 17:19:43.870498",
+        "tasks": [
+          {
+            "title": "Water",
+            "description": "Water the Monstera when the top 2 inches of soil are dry, typically every 7-10 days in Lisbon's climate.",
+            "interval_days": 7,
+            "done_today": true,
+            "last_done": "2025-05-22"
+          },
+          {
+            "title": "Mist Leaves",
+            "description": "Mist the leaves with water to increase humidity, especially in Lisbon's dry indoor air.",
+            "interval_days": 2,
+            "done_today": true,
+            "last_done": "2025-05-22"
+          },
+          {
+            "title": "Clean Leaves",
+            "description": "Wipe the leaves with a damp cloth to remove dust and improve photosynthesis.",
+            "interval_days": 14
+          },
+          {
+            "title": "Fertilize",
+            "description": "Apply a balanced liquid fertilizer diluted to half strength during the growing season (spring and summer).",
+            "interval_days": 30
+          },
+          {
+            "title": "Rotate Plant",
+            "description": "Rotate the Monstera 90 degrees to ensure even growth and prevent leaning toward light.",
+            "interval_days": 7
+          },
+          {
+            "title": "Check for Pests",
+            "description": "Inspect leaves and stems for common pests like spider mites or mealybugs.",
+            "interval_days": 14
+          },
+          {
+            "title": "task-tratata",
+            "description": "tratata-ta",
+            "interval_days": 1,
+            "done_today": false,
+            "last_done": null
+          }
+        ]
+      }
+    ]
+  }
+}
