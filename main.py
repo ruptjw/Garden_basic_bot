@@ -23,6 +23,249 @@ ADD_TASK_TITLE, ADD_TASK_DESC, ADD_TASK_INTERVAL = range(3)
 EDIT_TASK_FIELD, EDIT_TASK_VALUE = range(3, 5)
 EDIT_PLANT_FIELD, EDIT_PLANT_VALUE = range(5, 7)
 
+# Build the Application instance globally
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+# Add all your handlers here (as they are currently in your code)
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("add", add_plant))
+app.add_handler(CommandHandler("today", today))
+app.add_handler(CommandHandler("plants", list_plants))
+app.add_handler(CommandHandler("manage", manage))
+
+# Callback handler for task completion (NOT part of conversation)
+app.add_handler(CallbackQueryHandler(handle_task_callback, pattern="^(task_[0-9]+_[0-9]+|refresh_tasks|no_plants|add_custom_task)"))
+
+# Management callback handler
+app.add_handler(CallbackQueryHandler(handle_management_callback, pattern="^(manage_|plant_menu_|task_menu_|delete_|confirm_delete_|back_to_main_manage|edit_plant_[0-9]+|edit_task_[0-9]+_[0-9]+)"))
+
+# Conversation handler for adding custom tasks
+add_task_conv = ConversationHandler(
+    entry_points=[CommandHandler("addtask", start_add_task)],
+    states={
+        ADD_TASK_TITLE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_title),
+            CallbackQueryHandler(handle_plant_selection, pattern="^(select_plant_|cancel_add_task)")
+        ],
+        ADD_TASK_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_desc)],
+        ADD_TASK_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_interval)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_conversation)],
+    allow_reentry=True
+)
+
+# Conversation handler for editing plants
+edit_plant_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(handle_edit_selection, pattern="^edit_plant_(name|age)")],
+    states={
+        EDIT_PLANT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_plant_value)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_conversation)],
+    allow_reentry=True
+)
+
+# Conversation handler for editing tasks
+edit_task_conv = ConversationHandler(
+    entry_points=[CallbackQueryHandler(handle_edit_selection, pattern="^edit_task_(title|description|interval)")],
+    states={
+        EDIT_TASK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_task_value)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_conversation)],
+    allow_reentry=True
+)
+
+app.add_handler(add_task_conv)
+app.add_handler(edit_plant_conv)
+app.add_handler(edit_task_conv)
+
+
+# Initialize the application instance outside of any function to be available globally
+# This step is critical for Cloud Run to find and serve your app.
+async def setup_webhook():
+    await app.initialize()
+    await app.updater.start_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 8080)),
+        url_path=TELEGRAM_TOKEN,
+        secret_token=TELEGRAM_TOKEN,
+        # IMPORTANT: This webhook_url needs to be set *before* you return the app
+        # for Gunicorn to use if it tries to set the webhook itself.
+        # However, for Cloud Run, you usually set the webhook_url via Telegram's API
+        # *after* deployment, not directly in the bot code being served by Gunicorn.
+        # But if you want the bot to set it on startup, include it here.
+        webhook_url=f"https://garden-basic-bot-471741639014.europe-west1.run.app/{TELEGRAM_TOKEN}"
+    )
+    # The webhook needs to be set up before the app is returned for Gunicorn to serve it.
+    # We call this setup_webhook from the entrypoint.
+
+# This is the WSGI application that Gunicorn will serve
+# It's an async function, so Gunicorn will run it using an ASGI adapter.
+# If your app is not directly compatible as an ASGI app, you might need quart or a simple wrapper.
+# For python-telegram-bot 20.x, app.webhooks.on_startup() might be used with a custom server.
+# However, the easiest way for Cloud Run is to define an entrypoint that runs your setup.
+# Let's simplify the entrypoint and make sure the webhook is set explicitly.
+
+# The `application` variable will be what Gunicorn looks for.
+# We'll make it a Quart app directly to ensure Gunicorn can serve it.
+
+from quart import Quart, request, abort
+
+# Create a Quart app instance
+quart_app = Quart(__name__)
+
+@quart_app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+async def telegram_webhook():
+    update = Update.de_json(await request.get_json(), app.bot)
+    await app.process_update(update)
+    return "" # Return an empty string with 200 OK
+
+# This is the main entry point for Gunicorn
+# Gunicorn will look for a variable named 'application' (or specified in command)
+# that is a WSGI/ASGI callable.
+# We need to initialize the telegram bot's webhook setup *before* returning the quart_app.
+# This part is a bit tricky for Cloud Run's single entrypoint.
+
+# A more robust setup for Cloud Run with python-telegram-bot and Gunicorn/Quart:
+# Make sure app.initialize() and app.updater.start_webhook are called on startup.
+
+# Let's define a function that Gunicorn will call to get the ASGI app.
+# We need to set the webhook *once* when the service starts up.
+
+# Define the ASGI application
+async def create_app():
+
+ # Initialize the PTB application
+    await app.initialize()
+    # Set up the webhook with Telegram itself.
+    # This is typically done *once* after deployment, not on every container startup.
+    # However, if you want the bot to handle it, ensure it's called.
+    # The run_webhook method starts an internal server, which we don't want with Gunicorn.
+    # Instead, we want to tell Telegram the URL and then pass updates to app.process_update.
+
+    # Option 1: Set webhook explicitly via API after deployment (Recommended for stability)
+    # You would typically do this with a separate script or curl command:
+    # `curl -F "url=https://garden-basic-bot-471741639014.europe-west1.run.app/{TELEGRAM_TOKEN}" https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook`
+    # This bot code would then just receive updates via the `/TELEGRAM_TOKEN` endpoint.
+
+    # Option 2: Attempt to set webhook on startup (less reliable in Cloud Run due to re-initialization)
+    # If you must set it here, ensure it handles re-attempts.
+    # But the current error implies run_webhook is called, which starts a server.
+
+    # The most common way for Cloud Run is to use Quart and pass updates directly.
+    # We need to ensure `app` is initialized and ready to process updates.
+
+    # Ensure the bot is ready to process updates
+    await app.start() # This prepares the bot for processing updates
+
+    # Return the Quart app instance that Gunicorn will serve
+    return quart_app
+
+# Gunicorn will typically look for a callable named `application` or specified in the command.
+# We need `quart_app` to be the callable.
+
+# For Gunicorn to pick up `quart_app` as the ASGI application,
+# you would set your Cloud Run container command to something like:
+# `gunicorn -w 1 -k uvicorn.workers.UvicornWorker main:quart_app`
+# First, ensure uvicorn is in requirements.txt if using UvicornWorker.
+# Let's try to simplify this without explicitly importing Quart or UvicornWorker if possible,
+# and stick to what python-telegram-bot provides for webhook.
+
+# python-telegram-bot 20.x is built on `asyncio` and `httpx`, and uses `Quart` internally for `run_webhook`.
+# When run behind a WSGI/ASGI server like Gunicorn, you need to provide the ASGI app.
+# The `Application` instance itself provides an `asgi_app` property.
+
+# Re-simplifying the entry point:
+# The `app` (your Application instance) is already global.
+# We need to explicitly initialize it and then expose its ASGI application.
+
+async def init_app():
+    """Initializes the Telegram Application and sets up the webhook."""
+    await app.initialize()
+    await app.start() # Needed for processing updates
+    # This is where you would set the webhook URL with Telegram.
+    # It's better to do this *once* manually or via a separate script after deployment.
+    # For a robust Cloud Run deployment, avoid relying on the bot setting its own webhook
+    # on every container startup, as this can lead to race conditions or rate limits.
+    # We assume the webhook is already set externally to point to this Cloud Run URL.
+    print("🤖 Plant Care Bot initialized and ready to receive webhooks.")
+    return app.webhooks.asgi_app # This is the ASGI application Quart will serve
+
+# Make the `application` variable globally accessible for Gunicorn
+# This will be initialized by the first request.
+application = None
+
+# This is a common pattern for async app startup with Gunicorn/uvicorn.
+# Gunicorn needs a callable. `main:application`
+# Where `application` is the ASGI callable.
+
+# Let's adjust the `if __name__ == "__main__":` block to be the Cloud Run entrypoint logic.
+# The previous `run_webhook` attempts to start a server, which conflicts with Gunicorn.
+# Instead, we need to export the bot's `asgi_app` that Gunicorn can use.
+
+# The `app.webhooks.asgi_app` object is the ASGI application.
+# We need to ensure `app.initialize()` and `app.start()` are called *before* this app is served.
+# This is usually done in a startup hook or by making the app creation itself async.
+
+# Final proposed structure for `main.py`:
+
+# Ensure `app` is defined globally and handlers are added globally.
+# ... (your existing code defining `app` and adding handlers) ...
+
+# This is the actual ASGI application that Gunicorn will run
+# We must ensure `app` is initialized when the first request comes.
+# A common pattern is to make the application callable itself responsible for init.
+
+# Let's try this:
+# 1. Keep the `app` instance and handler definitions global.
+# 2. Define an `application` object that Gunicorn will serve. This object should ensure the Telegram app is initialized.
+
+# Make sure you have Quart in your requirements.txt:
+# `quart`
+# `uvicorn` (if you plan to use `uvicorn.workers.UvicornWorker` with Gunicorn)
+
+# Instead of `app.run_webhook`, we'll set up a minimal Quart app that calls PTB's process_update.
+# This gives us more control and better fits the Gunicorn model.
+
+# Add `quart` to your `requirements.txt`.
+
+# Remove all of the previous `if __name__ == "__main__":` block.
+# Replace it with this:
+from quart import Quart, request, abort
+
+# Create a Quart app instance
+quart_app = Quart(__name__)
+
+# This is the endpoint for Telegram webhooks
+@quart_app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+async def telegram_webhook():
+    # Ensure the PTB app is initialized before processing updates
+    # This is important for cold starts.
+    if not app.updater.is_running:
+        await app.initialize()
+        await app.start()
+
+    update = Update.de_json(await request.get_json(), app.bot)
+    await app.process_update(update)
+    return "" # Telegram expects a 200 OK response
+
+# This is the entry point for Gunicorn.
+# Gunicorn will typically look for an `application` variable (or whatever you specify).
+# We're making `quart_app` the callable that Gunicorn will serve.
+application = quart_app
+
+# A small optional startup script to ensure initialization and logging if you need
+async def startup_event():
+    print("🤖 Plant Care Bot (Quart + PTB) starting up...")
+    # You could also set the webhook here if you absolutely want the bot to manage it
+    # upon every new instance start. Be careful with Telegram's rate limits.
+    # If using this, make sure `app.updater.start_webhook` is called correctly.
+    # But usually, manual `setWebhook` after deployment is preferred.
+    # await app.initialize()
+    # await app.start() # If not doing it on first request.
+
+# Add a startup event listener if using Quart 0.16.0+
+# quart_app.before_serving(startup_event)
+
 def get_gcs_blob():
     """Helper function to get the GCS blob."""
     if not GCS_BUCKET_NAME:
@@ -663,73 +906,9 @@ async def list_plants(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message)
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=logging.INFO
-    )
-
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    # Command handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("add", add_plant))
-    app.add_handler(CommandHandler("today", today))
-    app.add_handler(CommandHandler("plants", list_plants))
-    app.add_handler(CommandHandler("manage", manage))
-
-    # Callback handler for task completion (NOT part of conversation)
-    app.add_handler(CallbackQueryHandler(handle_task_callback, pattern="^(task_[0-9]+_[0-9]+|refresh_tasks|no_plants|add_custom_task)"))
-
-    # Management callback handler
-    app.add_handler(CallbackQueryHandler(handle_management_callback, pattern="^(manage_|plant_menu_|task_menu_|delete_|confirm_delete_|back_to_main_manage|edit_plant_[0-9]+|edit_task_[0-9]+_[0-9]+)"))
-
-    # Conversation handler for adding custom tasks
-    add_task_conv = ConversationHandler(
-        entry_points=[CommandHandler("addtask", start_add_task)],
-        states={
-            ADD_TASK_TITLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_title),
-                CallbackQueryHandler(handle_plant_selection, pattern="^(select_plant_|cancel_add_task)")
-            ],
-            ADD_TASK_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_desc)],
-            ADD_TASK_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_interval)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        allow_reentry=True
-    )
-
-    # Conversation handler for editing plants
-    edit_plant_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(handle_edit_selection, pattern="^edit_plant_(name|age)")],
-        states={
-            EDIT_PLANT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_plant_value)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        allow_reentry=True
-    )
-
-    # Conversation handler for editing tasks
-    edit_task_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(handle_edit_selection, pattern="^edit_task_(title|description|interval)")],
-        states={
-            EDIT_TASK_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_task_value)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel_conversation)],
-        allow_reentry=True
-    )
-
-    app.add_handler(add_task_conv)
-    app.add_handler(edit_plant_conv)
-    app.add_handler(edit_task_conv)
-
-    print("🤖 Plant Care Bot is starting...")
-    # This is the crucial part for webhook deployment
-    # Google Cloud Run expects the application to bind to 0.0.0.0 on the port defined by the PORT environment variable.
-    # telegram.ext.Application.run_webhook handles this correctly.
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080)),
-        url_path=TELEGRAM_TOKEN,
-        secret_token=TELEGRAM_TOKEN,  # <--- ADD THIS LINE
-        webhook_url=f"https://garden-basic-bot-471741639014.europe-west1.run.app/{TELEGRAM_TOKEN}"
-    )
+    # For local testing, you can run the Quart app directly
+    # Cloud Run will use Gunicorn to run `main:application`
+    # Ensure `TELEGRAM_TOKEN` is set in your environment for local testing.
+    # You might also want to set a dummy webhook URL here for local setup.
+    print("Running Quart app locally...")
+    quart_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
