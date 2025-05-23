@@ -730,5 +730,6 @@ if __name__ == "__main__":
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8080)),
         url_path=TELEGRAM_TOKEN,
+        secret_token=TELEGRAM_TOKEN,  # <--- ADD THIS LINE
         webhook_url=f"https://garden-basic-bot-471741639014.europe-west1.run.app/{TELEGRAM_TOKEN}"
     )
