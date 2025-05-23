@@ -9,31 +9,55 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     ContextTypes, MessageHandler, filters, ConversationHandler
 )
+from google.cloud import storage # Add this line
 
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-DATA_FILE = "plants.json"
-if not os.path.exists(DATA_FILE):
-    with open(DATA_FILE, "w") as f:
-        json.dump({}, f)
+GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME") # Add this line
+GCS_FILE_NAME = "plants.json" # Add this line
 
 # Conversation states
 ADD_TASK_TITLE, ADD_TASK_DESC, ADD_TASK_INTERVAL = range(3)
 EDIT_TASK_FIELD, EDIT_TASK_VALUE = range(3, 5)
 EDIT_PLANT_FIELD, EDIT_PLANT_VALUE = range(5, 7)
 
+def get_gcs_blob():
+    """Helper function to get the GCS blob."""
+    if not GCS_BUCKET_NAME:
+        logging.error("GCS_BUCKET_NAME environment variable not set.")
+        return None
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(GCS_BUCKET_NAME)
+    return bucket.blob(GCS_FILE_NAME)
+
 def load_data():
+    blob = get_gcs_blob()
+    if not blob:
+        return {}
+
     try:
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+        # Download blob as string and load JSON
+        data = blob.download_as_text()
+        return json.loads(data)
+    except Exception as e:
+        # If file doesn't exist or content is invalid, return empty dict
+        logging.warning(f"Error loading data from GCS: {e}. Initializing with empty data.")
         return {}
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    blob = get_gcs_blob()
+    if not blob:
+        logging.error("Cannot save data, GCS blob not available.")
+        return
+
+    try:
+        # Upload data as JSON string
+        blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+        logging.info("Data saved to GCS successfully.")
+    except Exception as e:
+        logging.error(f"Error saving data to GCS: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
