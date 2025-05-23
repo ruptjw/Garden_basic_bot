@@ -2,3 +2,6 @@ python-telegram-bot
 python-dotenv
 requests
 google-cloud-storage
+quart
+gunicorn
+uvicorn # Recommended for ASGI apps with Gunicorn
